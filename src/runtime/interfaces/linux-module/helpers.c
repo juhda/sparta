@@ -26,8 +26,8 @@
 bool vitamins_change_cpu(struct task_struct *kern_tsk, int next_cpu){
     cpumask_t mask;
 
-    cpus_clear(mask);
-    cpu_set(next_cpu, mask);
+    cpumask_clear(&mask);
+    cpumask_set_cpu(next_cpu, &mask);
 
     return set_cpus_allowed_ptr(kern_tsk,&mask);
 }

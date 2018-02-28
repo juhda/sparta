@@ -1,27 +1,27 @@
 /*******************************************************************************
  * Copyright (C) 2018 Tiago R. Muck <tmuck@uci.edu>
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  ******************************************************************************/
 
 #include "../linux-module/sense.h"
 
-#include <linux/sched.h>
 #include <linux/kthread.h>
 #include <linux/sched/rt.h>
 #include <linux/math64.h>
 #include <trace/events/sched.h>
+#include <uapi/linux/sched/types.h>
 
 #include "../common/sense_defs.h"
 #include "../linux-module/helpers.h"
@@ -109,8 +109,8 @@ static void new_task_created(int at_cpu, struct task_struct *tsk,struct task_str
     //if we want to pin this task
     if(at_cpu >= 0){
     	BUG_ON(at_cpu >= sys->core_list_size);
-    	cpus_clear(tsk->cpus_allowed);
-    	cpu_set(at_cpu, tsk->cpus_allowed);
+    	cpumask_clear(&tsk->cpus_allowed);
+    	cpumask_set_cpu(at_cpu, &tsk->cpus_allowed);
     }
 
     priv_hooks->sen_data_lock = __SPIN_LOCK_UNLOCKED(priv_hooks->sen_data_lock);
@@ -442,7 +442,7 @@ static perf_data_cpu_t cpu_counters_begin[NR_CPUS];//update every context switch
 static volatile bool first_sense[NR_CPUS];
 
 
-static inline void vitamins_sensing_begin_probe(int cpu, struct task_struct *tsk)
+static inline void vitamins_sensing_begin_probe(bool preempt, int cpu, struct task_struct *tsk)
 {
 	private_hook_data_t *p;
 	perf_data_cpu_t *data = &(cpu_counters_begin[cpu]);
@@ -467,7 +467,7 @@ static inline void vitamins_sensing_begin_probe(int cpu, struct task_struct *tsk
 	smp_mb();
 }
 
-static inline void vitamins_sensing_end_probe(int cpu, struct task_struct *tsk)
+static inline void vitamins_sensing_end_probe(bool preempt, int cpu, struct task_struct *tsk)
 {
 	private_hook_data_t *p;
 	tracked_task_data_t *_p;
@@ -475,9 +475,6 @@ static inline void vitamins_sensing_end_probe(int cpu, struct task_struct *tsk)
 	uint64_t time_busy_ms;
 	uint64_t beat_cnt[MAX_BEAT_DOMAINS];
 	int i,wid;
-
-	//true if the task is leaving the cpu voluntarly
-	bool vcsw = tsk->state && !(preempt_count() & PREEMPT_ACTIVE);
 
     perf_data_cpu_t *data_begin = &(cpu_counters_begin[cpu]);
 
@@ -506,7 +503,7 @@ static inline void vitamins_sensing_end_probe(int cpu, struct task_struct *tsk)
     	perf_data_cpu_t *data_cnt = &(vitsdata->sensing_windows[wid]._acc.cpus[cpu]);
     	for(i = 0; i < vitsdata->perfcnt_mapped_cnt; ++i) data_cnt->perfcnt.perfcnts[i] += perfcnts[i];
     	data_cnt->perfcnt.time_busy_ms += time_busy_ms;
-    	if(vcsw) data_cnt->perfcnt.nvcsw += 1;
+    	if(preempt) data_cnt->perfcnt.nvcsw += 1;
     	else	 data_cnt->perfcnt.nivcsw += 1;
     	for(i = 0; i < MAX_BEAT_DOMAINS; ++i) data_cnt->beats[i] += beat_cnt[i];
     }
@@ -522,7 +519,7 @@ static inline void vitamins_sensing_end_probe(int cpu, struct task_struct *tsk)
     		for(i = 0; i < vitsdata->perfcnt_mapped_cnt; ++i)
     			vitsdata->sensing_windows[wid]._acc.tasks[_p->task_idx].perfcnt.perfcnts[i] += perfcnts[i];
     		vitsdata->sensing_windows[wid]._acc.tasks[_p->task_idx].perfcnt.time_busy_ms += time_busy_ms;
-    		if(vcsw) vitsdata->sensing_windows[wid]._acc.tasks[_p->task_idx].perfcnt.nvcsw += 1;
+    		if(preempt) vitsdata->sensing_windows[wid]._acc.tasks[_p->task_idx].perfcnt.nvcsw += 1;
     		else	 vitsdata->sensing_windows[wid]._acc.tasks[_p->task_idx].perfcnt.nivcsw += 1;
     		for(i = 0; i < MAX_BEAT_DOMAINS; ++i) vitsdata->sensing_windows[wid]._acc.tasks[_p->task_idx].beats[i] += beat_cnt[i];
     	}
@@ -532,10 +529,10 @@ static inline void vitamins_sensing_end_probe(int cpu, struct task_struct *tsk)
     smp_mb();
 }
 
-static void vitamins_context_switch_probe(void *nope, struct task_struct *prev,struct task_struct *next){
+static void vitamins_context_switch_probe(void *nope, bool preempt, struct task_struct *prev,struct task_struct *next){
 	int cpu = task_thread_info(next)->cpu;
-	vitamins_sensing_end_probe(cpu,prev);
-	vitamins_sensing_begin_probe(cpu,next);
+	vitamins_sensing_end_probe(preempt,cpu,prev);
+	vitamins_sensing_begin_probe(preempt,cpu,next);
 }
 
 static void vitamins_sched_process_fork_probe(void *nope, struct task_struct *parent, struct task_struct *p){
@@ -680,4 +677,3 @@ void sense_cleanup(sys_info_t *sys)
     	if(priv_hook_created_tasks[i].beats != nullptr) dealloc_task_beat_data(&(priv_hook_created_tasks[i]));
     }
 }
-
