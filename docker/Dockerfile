@@ -21,4 +21,4 @@ RUN ./build.bash
 
 WORKDIR /workspace/sparta
 RUN sed -i '0,/=host/s//=arm/' .makefile.buildopts
-RUN make -j4 daemons lin_sensing_module ubench
+RUN make -j8 daemons lin_sensing_module ubench
