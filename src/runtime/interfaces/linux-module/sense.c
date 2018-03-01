@@ -30,6 +30,7 @@
 #include "../linux-module/sensing_window.h"
 #include "../linux-module/setup.h"
 #include "../linux-module/user_if.h"
+#include "../linux-module/sense_tracepoint.h"
 
 
 //per cpu flush kthreads to ensure tasks are sensed at the end of the epoch
@@ -574,6 +575,8 @@ void sense_init(sys_info_t *sys)
 
     res = trace_perf_counter_reset();
     BUG_ON(res==false);
+		res = sense_tracepoint_init();
+		BUG_ON(res);
 }
 
 static void vitamins_sense_cleanup_counters(sys_info_t *sys)
@@ -641,16 +644,16 @@ void sense_begin(sys_info_t *sys)
     //carefull that vit_plat_enabled_perfcnts may show fixed enabled counter event before any is made available (e.g. PERFCNT_BUSY_CY on armv7)
     BUG_ON(vitsdata->perfcnt_mapped_cnt != plat_enabled_perfcnts());
 
-    register_trace_sched_switch(vitamins_context_switch_probe,0);
-    register_trace_sched_process_fork(vitamins_sched_process_fork_probe,0);
+    sense_tracepoint_probe_register("sched_switch", vitamins_context_switch_probe, 0);
+    sense_tracepoint_probe_register("sched_process_fork", vitamins_sched_process_fork_probe, 0);
 }
 
 void sense_stop(sys_info_t *sys)
 {
     vitsdata->stoptime_ms = jiffies_to_msecs(jiffies);
 
-    unregister_trace_sched_process_fork(vitamins_sched_process_fork_probe,0);
-    unregister_trace_sched_switch(vitamins_context_switch_probe,0);
+    sense_tracepoint_probe_unregister("sched_process_fork", vitamins_sched_process_fork_probe, 0);
+    sense_tracepoint_probe_unregister("sched_switch", vitamins_context_switch_probe, 0);
 	tracepoint_synchronize_unregister();
 }
 
@@ -671,6 +674,7 @@ void sense_destroy_mechanisms(sys_info_t *sys){
 void sense_cleanup(sys_info_t *sys)
 {
 	int i;
+	sense_tracepoint_exit();
 	for(i = 0; i < hook_data_hashmap_struct_size; ++i) clear_list(hook_hashmap[i]);
 
     for(i = 0; i < MAX_CREATED_TASKS; ++i) {
